@@ -1,0 +1,5 @@
+{
+  "devDependencies": {
+    "@solarity/hardhat-gobind": "^1.2.2"
+  }
+}
