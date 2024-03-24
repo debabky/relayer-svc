@@ -17,4 +17,4 @@ jobs:
     - name: Vendor mod file
       run: go mod vendor
     - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag ghcr.io/debabky/relayer-svc
+      run: docker build . --file Dockerfile --tag ghcr.io/debabky/relayer-svc && docker push ghcr.io/debabky/relayer-svc
