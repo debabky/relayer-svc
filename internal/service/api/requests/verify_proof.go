@@ -8,8 +8,11 @@ import (
 )
 
 type RegisterRequestData struct {
-	InternalPublicKey string `json:"internal_public_key"`
-	Signature         struct {
+	InternalPublicKey struct {
+		X string `json:"x"`
+		Y string `json:"y"`
+	} `json:"internal_public_key"`
+	Signature struct {
 		S string `json:"s"`
 		N string `json:"n"`
 	} `json:"signature"`

@@ -4,20 +4,21 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	"github.com/debabky/relayer/internal/contracts"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
-	"gitlab.com/distributed_lab/logan/v3/errors"
 	"math/big"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/debabky/relayer/internal/contracts"
 	"github.com/debabky/relayer/internal/service/api/requests"
 	"github.com/debabky/relayer/resources"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"gitlab.com/distributed_lab/ape"
 	"gitlab.com/distributed_lab/ape/problems"
+	"gitlab.com/distributed_lab/logan/v3/errors"
 )
 
 func Register(w http.ResponseWriter, r *http.Request) {
@@ -28,17 +29,19 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pubKey, s, n, a, b, c, err := getRegistrationData(req)
+	x, y, s, n, a, b, c, err := getRegistrationData(req)
 	if err != nil {
 		Log(r).WithError(err).Error("failed to get registration data")
 		ape.RenderErr(w, problems.InternalError())
 		return
 	}
+	timestampUnix := time.Unix(req.Data.Timestamp, 0)
+	timestampInt := int64(timestampUnix.Day()) | int64(timestampUnix.Month()<<8) | int64((timestampUnix.Year()-2000)<<16)
 
 	NetworkConfig(r).LockNonce()
 	defer NetworkConfig(r).UnlockNonce()
 
-	tx, err := RegistrationContract(r).Register(
+	_, err = RegistrationContract(r).Register(
 		&bind.TransactOpts{
 			NoSend: true,
 			From:   crypto.PubkeyToAddress(NetworkConfig(r).PrivateKey.PublicKey),
@@ -48,13 +51,14 @@ func Register(w http.ResponseWriter, r *http.Request) {
 				)
 			},
 		},
-		pubKey, s, n,
+		x, y, s, n,
 		contracts.VerifierHelperProofPoints{
 			A: a,
 			B: b,
 			C: c,
 		},
-		big.NewInt(req.Data.Timestamp),
+		big.NewInt(timestampInt),
+		big.NewInt(0),
 	)
 	if err != nil {
 		Log(r).WithError(err).Error("failed to check transaction validity")
@@ -62,7 +66,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err = RegistrationContract(r).Register(
+	tx, err := RegistrationContract(r).Register(
 		&bind.TransactOpts{
 			From:  crypto.PubkeyToAddress(NetworkConfig(r).PrivateKey.PublicKey),
 			Nonce: new(big.Int).SetUint64(NetworkConfig(r).Nonce()),
@@ -72,13 +76,14 @@ func Register(w http.ResponseWriter, r *http.Request) {
 				)
 			},
 		},
-		pubKey, s, n,
+		x, y, s, n,
 		contracts.VerifierHelperProofPoints{
 			A: a,
 			B: b,
 			C: c,
 		},
-		big.NewInt(req.Data.Timestamp),
+		big.NewInt(timestampInt),
+		big.NewInt(0),
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "nonce") {
@@ -98,13 +103,14 @@ func Register(w http.ResponseWriter, r *http.Request) {
 						)
 					},
 				},
-				pubKey, s, n,
+				x, y, s, n,
 				contracts.VerifierHelperProofPoints{
 					A: a,
 					B: b,
 					C: c,
 				},
 				big.NewInt(req.Data.Timestamp),
+				big.NewInt(0),
 			)
 			if err != nil {
 				Log(r).WithError(err).Error("failed to send registration tx")
@@ -132,31 +138,38 @@ func Register(w http.ResponseWriter, r *http.Request) {
 }
 
 func getRegistrationData(req requests.RegisterRequest) (
-	[32]byte, []byte, []byte, [2]*big.Int, [2][2]*big.Int, [2]*big.Int, error,
+	[32]byte, [32]byte, []byte, []byte, [2]*big.Int, [2][2]*big.Int, [2]*big.Int, error,
 ) {
-	pubKey, err := hex.DecodeString(req.Data.InternalPublicKey)
+	x, err := hex.DecodeString(req.Data.InternalPublicKey.X)
 	if err != nil {
-		return [32]byte{}, nil, nil, [2]*big.Int{}, [2][2]*big.Int{}, [2]*big.Int{}, errors.Wrap(err, "failed to decode hex")
+		return [32]byte{}, [32]byte{}, nil, nil, [2]*big.Int{}, [2][2]*big.Int{}, [2]*big.Int{}, errors.Wrap(err, "failed to decode hex")
 	}
-	pubKeyArr := [32]byte{}
-	copy(pubKeyArr[:], pubKey)
+	xArr := [32]byte{}
+	copy(xArr[:], x)
+
+	y, err := hex.DecodeString(req.Data.InternalPublicKey.Y)
+	if err != nil {
+		return [32]byte{}, [32]byte{}, nil, nil, [2]*big.Int{}, [2][2]*big.Int{}, [2]*big.Int{}, errors.Wrap(err, "failed to decode hex")
+	}
+	yArr := [32]byte{}
+	copy(yArr[:], y)
 
 	s, err := hex.DecodeString(req.Data.Signature.S)
 	if err != nil {
-		return [32]byte{}, nil, nil, [2]*big.Int{}, [2][2]*big.Int{}, [2]*big.Int{}, errors.Wrap(err, "failed to decode hex")
+		return [32]byte{}, [32]byte{}, nil, nil, [2]*big.Int{}, [2][2]*big.Int{}, [2]*big.Int{}, errors.Wrap(err, "failed to decode hex")
 	}
 
 	n, err := hex.DecodeString(req.Data.Signature.N)
 	if err != nil {
-		return [32]byte{}, nil, nil, [2]*big.Int{}, [2][2]*big.Int{}, [2]*big.Int{}, errors.Wrap(err, "failed to decode hex")
+		return [32]byte{}, [32]byte{}, nil, nil, [2]*big.Int{}, [2][2]*big.Int{}, [2]*big.Int{}, errors.Wrap(err, "failed to decode hex")
 	}
 
 	a, b, c, err := getProofPoints(req)
 	if err != nil {
-		return [32]byte{}, nil, nil, [2]*big.Int{}, [2][2]*big.Int{}, [2]*big.Int{}, errors.Wrap(err, "failed to get proof points")
+		return [32]byte{}, [32]byte{}, nil, nil, [2]*big.Int{}, [2][2]*big.Int{}, [2]*big.Int{}, errors.Wrap(err, "failed to get proof points")
 	}
 
-	return pubKeyArr, s, n, a, b, c, nil
+	return xArr, yArr, s, n, a, b, c, nil
 }
 
 func getProofPoints(req requests.RegisterRequest) ([2]*big.Int, [2][2]*big.Int, [2]*big.Int, error) {
